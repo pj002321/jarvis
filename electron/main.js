@@ -25,7 +25,11 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  serverProcess = spawn(NEXT_BIN, [app.isPackaged ? "start" : "dev"], { cwd: ROOT, stdio: "ignore" });
+  serverProcess = spawn(process.execPath, [NEXT_BIN, app.isPackaged ? "start" : "dev"], {
+    cwd: ROOT,
+    stdio: "ignore",
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+  });
   waitForServer(`http://localhost:${PORT}`, createWindow);
 });
 

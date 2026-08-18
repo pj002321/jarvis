@@ -29,6 +29,10 @@
     "mac": {
       "icon": "public/icon.png",
       "target": "dir"
+    },
+    "win": {
+      "icon": "public/icon.png",
+      "target": "nsis"
     }
   },
   "dependencies": {
