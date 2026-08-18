@@ -13,6 +13,13 @@ const fileMap = new Map<string, string>([
     "schema.sql",
     `CREATE TABLE orders (\n  id INT PRIMARY KEY,\n  customer_id INT,\n  FOREIGN KEY (customer_id) REFERENCES customers(id)\n);\n`,
   ],
+  ["pkg/util.py", `def helper():\n    return 1\n`],
+  ["pkg/main.py", `from pkg.util import helper\nimport util\n`],
+  ["pkg/sub/mod.py", `from ..util import helper\n`],
+  [
+    "gen_schema.py",
+    `SCHEMA = f"""\nCREATE TABLE items (\n  id INT PRIMARY KEY,\n  order_id INT,\n  FOREIGN KEY (order_id) REFERENCES orders(id)\n){{STRICT}}\n"""\n`,
+  ],
 ]);
 
 const { nodes, edges } = buildCodeGraph(fileMap);
@@ -32,6 +39,18 @@ assert.ok(
 assert.ok(
   edges.some((e) => e.source === "table:orders" && e.target === "table:customers" && e.kind === "fk"),
   "sql FK orders -> customers not extracted"
+);
+assert.ok(
+  edges.some((e) => e.source === "pkg/main.py" && e.target === "pkg/util.py" && e.kind === "import"),
+  "python absolute-ish import (dotted module path) not resolved"
+);
+assert.ok(
+  edges.some((e) => e.source === "pkg/sub/mod.py" && e.target === "pkg/util.py" && e.kind === "import"),
+  "python relative import (from ..util import x) not resolved"
+);
+assert.ok(
+  edges.some((e) => e.source === "table:items" && e.target === "table:orders" && e.kind === "fk"),
+  "sql FK embedded in python f-string (no trailing semicolon) not extracted"
 );
 assert.ok(nodes.length === new Set(nodes.map((n) => n.id)).size, "duplicate node ids");
 

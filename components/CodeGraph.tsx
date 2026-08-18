@@ -5,8 +5,8 @@ import type { GraphNode, GraphEdge } from "@/lib/codeGraph";
 
 export default function CodeGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[] }) {
   const [hover, setHover] = useState<string | null>(null);
-  const size = 480;
-  const radius = size / 2 - 56;
+  const size = 800;
+  const radius = size / 2 - 80;
   const center = size / 2;
 
   const positions = useMemo(() => {
@@ -53,7 +53,7 @@ export default function CodeGraph({ nodes, edges }: { nodes: GraphNode[]; edges:
               y2={b.y}
               stroke={e.kind === "fk" ? "#e879f9" : "#22d3ee"}
               strokeOpacity={active ? 0.9 : 0.22}
-              strokeWidth={active ? 1.6 : 0.8}
+              strokeWidth={active ? 2.4 : 1.2}
               strokeDasharray={e.kind === "fk" ? "3 3" : "6 5"}
               className="edge-flow"
             />
