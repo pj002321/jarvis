@@ -5,13 +5,20 @@ import type { TreeNode } from "@/lib/types";
 import { scanDirectory, searchRelevantFiles, supportsDirectoryPicker } from "@/lib/clientScan";
 import { buildCodeGraph, type GraphNode, type GraphEdge } from "@/lib/codeGraph";
 import { loadDirHandle, saveDirHandle } from "@/lib/dirHandleStore";
+import type { LocalModel } from "@/lib/localModels";
 import CodeTree from "@/components/CodeTree";
 import CodeGraph from "@/components/CodeGraph";
 
 type Message = { role: "user" | "assistant"; content: string };
 type ViewMode = "tree" | "graph";
+type Backend = "cloud" | "local";
+type HardwareInfo = { totalMemGB: number; cpu: string; recommended: LocalModel[] };
+type OllamaStatus = { reachable: boolean; installed: string[] };
+type PullProgress = { status: string; pct: number | null };
 
 const KEY_STORAGE = "jarvis_api_key";
+const BACKEND_STORAGE = "jarvis_backend";
+const LOCAL_MODEL_STORAGE = "jarvis_local_model";
 const MAX_CONTEXT_CHARS = 40_000;
 
 function countFiles(node: TreeNode): number {
@@ -25,6 +32,13 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
   const [apiKey, setApiKey] = useState("");
+  const [backend, setBackend] = useState<Backend>("local");
+  const [settingsTab, setSettingsTab] = useState<Backend>("local");
+  const [localModel, setLocalModel] = useState("");
+  const [hardware, setHardware] = useState<HardwareInfo | null>(null);
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
+  const [pullingModel, setPullingModel] = useState<string | null>(null);
+  const [pullProgress, setPullProgress] = useState<PullProgress | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [tree, setTree] = useState<TreeNode | null>(null);
   const [fileMap, setFileMap] = useState<Map<string, string> | null>(null);
@@ -37,9 +51,19 @@ export default function Home() {
   const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const saved = localStorage.getItem(KEY_STORAGE) ?? "";
-    setApiKey(saved);
-    if (!saved) setShowSettings(true);
+    const savedKey = localStorage.getItem(KEY_STORAGE) ?? "";
+    const savedBackend = (localStorage.getItem(BACKEND_STORAGE) as Backend) || "local";
+    const savedLocalModel = localStorage.getItem(LOCAL_MODEL_STORAGE) ?? "";
+    setApiKey(savedKey);
+    setBackend(savedBackend);
+    setSettingsTab(savedBackend);
+    setLocalModel(savedLocalModel);
+    if ((savedBackend === "cloud" && !savedKey) || (savedBackend === "local" && !savedLocalModel)) {
+      setShowSettings(true);
+    }
+
+    loadHardware();
+    refreshOllamaStatus();
 
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -77,10 +101,77 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function loadHardware() {
+    try {
+      const res = await fetch("/api/hardware");
+      setHardware(await res.json());
+    } catch {
+      setHardware(null);
+    }
+  }
+
+  async function refreshOllamaStatus() {
+    try {
+      const res = await fetch("/api/ollama/status");
+      setOllamaStatus(await res.json());
+    } catch {
+      setOllamaStatus({ reachable: false, installed: [] });
+    }
+  }
+
   function saveKey(key: string) {
     setApiKey(key);
+    setBackend("cloud");
     localStorage.setItem(KEY_STORAGE, key);
+    localStorage.setItem(BACKEND_STORAGE, "cloud");
     setShowSettings(false);
+  }
+
+  function selectLocalModel(tag: string) {
+    setLocalModel(tag);
+    setBackend("local");
+    localStorage.setItem(LOCAL_MODEL_STORAGE, tag);
+    localStorage.setItem(BACKEND_STORAGE, "local");
+    setShowSettings(false);
+  }
+
+  async function pullModel(tag: string) {
+    setPullingModel(tag);
+    setPullProgress(null);
+    try {
+      const res = await fetch("/api/ollama/pull", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: tag }),
+      });
+      if (!res.body) throw new Error("Ollama에 연결할 수 없습니다.");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const chunk = JSON.parse(line);
+          if (chunk.total && chunk.completed) {
+            setPullProgress({ status: chunk.status, pct: Math.round((chunk.completed / chunk.total) * 100) });
+          } else if (chunk.status) {
+            setPullProgress({ status: chunk.status, pct: null });
+          }
+        }
+      }
+      await refreshOllamaStatus();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "모델 설치에 실패했습니다.");
+    } finally {
+      setPullingModel(null);
+      setPullProgress(null);
+    }
   }
 
   async function scanAndSet(handle: FileSystemDirectoryHandle) {
@@ -170,7 +261,11 @@ export default function Home() {
   async function send(text: string) {
     const content = text.trim();
     if (!content || busy) return;
-    if (!apiKey) {
+    if (backend === "cloud" && !apiKey) {
+      setShowSettings(true);
+      return;
+    }
+    if (backend === "local" && !localModel) {
       setShowSettings(true);
       return;
     }
@@ -184,7 +279,12 @@ export default function Home() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: nextMessages, apiKey, context: buildContext(content) || undefined }),
+        body: JSON.stringify({
+          messages: nextMessages,
+          context: buildContext(content) || undefined,
+          backend,
+          ...(backend === "cloud" ? { apiKey } : { model: localModel }),
+        }),
       });
 
       if (!res.ok || !res.body) {
@@ -215,7 +315,7 @@ export default function Home() {
         onClick={() => setShowSettings(true)}
         className="absolute top-4 right-4 text-cyan-400/70 hover:text-cyan-300 text-sm border border-cyan-800 rounded px-3 py-1 z-10"
       >
-        설정
+        설정 · {backend === "local" ? `💻 ${localModel || "미선택"}` : "☁️ Claude"}
       </button>
 
       {/* Left: code tree / relationship graph panel */}
@@ -353,47 +453,125 @@ export default function Home() {
 
       {showSettings && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-20">
-          <div className="bg-[#0a1014] border border-cyan-700 rounded-xl p-6 w-full max-w-sm space-y-3">
-            <h2 className="text-cyan-300 font-semibold">Anthropic API Key</h2>
-            <p className="text-cyan-600 text-xs">
-              브라우저에만 저장되며 서버로 전송되어 Claude 호출에만 사용됩니다.
-            </p>
-            <a
-              href="https://console.anthropic.com/settings/billing"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-block text-xs text-cyan-400 underline hover:text-cyan-300"
-            >
-              💳 남은 크레딧 확인 (Anthropic Console)
-            </a>
-            <input
-              type="password"
-              defaultValue={apiKey}
-              placeholder="sk-ant-..."
-              className="w-full bg-black/40 border border-cyan-800 rounded px-3 py-2 text-cyan-100 outline-none"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") saveKey((e.target as HTMLInputElement).value);
-              }}
-              id="key-input"
-            />
-            <div className="flex justify-end gap-2 pt-1">
-              {apiKey && (
-                <button
-                  onClick={() => setShowSettings(false)}
-                  className="px-3 py-1 text-cyan-500 text-sm"
-                >
-                  취소
-                </button>
-              )}
+          <div className="bg-[#0a1014] border border-cyan-700 rounded-xl p-6 w-full max-w-md space-y-3">
+            <div className="flex border border-cyan-800/60 rounded overflow-hidden text-xs">
               <button
-                onClick={() =>
-                  saveKey((document.getElementById("key-input") as HTMLInputElement).value)
-                }
-                className="px-3 py-1 border border-cyan-600 rounded text-cyan-300 text-sm"
+                onClick={() => setSettingsTab("local")}
+                className={`flex-1 py-1.5 ${settingsTab === "local" ? "bg-cyan-800/50 text-cyan-100" : "text-cyan-600"}`}
               >
-                저장
+                💻 로컬 모델
+              </button>
+              <button
+                onClick={() => setSettingsTab("cloud")}
+                className={`flex-1 py-1.5 ${settingsTab === "cloud" ? "bg-cyan-800/50 text-cyan-100" : "text-cyan-600"}`}
+              >
+                ☁️ Claude API
               </button>
             </div>
+
+            {settingsTab === "local" ? (
+              <div className="space-y-2">
+                <p className="text-cyan-600 text-xs">
+                  {hardware
+                    ? `내 하드웨어: ${hardware.cpu} · ${hardware.totalMemGB}GB RAM — 아래는 이 하드웨어에서 무리 없이 돌릴 수 있는 모델입니다.`
+                    : "하드웨어 확인 중..."}
+                </p>
+                {ollamaStatus && !ollamaStatus.reachable && (
+                  <div className="text-xs text-amber-400 border border-amber-700/50 rounded p-2 space-y-1">
+                    <p>Ollama가 실행 중이 아닙니다.</p>
+                    <p className="text-cyan-600">
+                      터미널에서 <code className="text-cyan-300">brew install ollama</code> 로 설치 후{" "}
+                      <code className="text-cyan-300">ollama serve</code> 를 실행하고 이 창을 다시 열어주세요.
+                    </p>
+                  </div>
+                )}
+                {ollamaStatus?.reachable && (
+                  <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1">
+                    {(hardware?.recommended ?? []).map((m) => {
+                      const installed = ollamaStatus.installed.some((n) => n.split(":")[0] === m.tag.split(":")[0] && n === m.tag);
+                      const selected = localModel === m.tag;
+                      const isPulling = pullingModel === m.tag;
+                      return (
+                        <div
+                          key={m.tag}
+                          className={`flex items-center justify-between gap-2 px-2 py-1.5 rounded border text-xs ${
+                            selected ? "border-cyan-400 bg-cyan-900/30" : "border-cyan-800/50"
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <p className="text-cyan-200 truncate">
+                              {m.label} {m.coding && <span className="text-fuchsia-400">· 코딩</span>}
+                            </p>
+                            <p className="text-cyan-700 truncate">{m.note} · {m.minRamGB}GB+</p>
+                          </div>
+                          {installed ? (
+                            <button
+                              onClick={() => selectLocalModel(m.tag)}
+                              className="px-2 py-1 border border-cyan-600 rounded text-cyan-300 shrink-0"
+                            >
+                              {selected ? "선택됨" : "선택"}
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => pullModel(m.tag)}
+                              disabled={pullingModel !== null}
+                              className="px-2 py-1 border border-cyan-700 rounded text-cyan-500 shrink-0 disabled:opacity-40 whitespace-nowrap"
+                            >
+                              {isPulling ? (pullProgress?.pct != null ? `${pullProgress.pct}%` : "설치 중...") : "설치"}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {hardware && hardware.recommended.length === 0 && (
+                      <p className="text-cyan-700 text-xs">이 하드웨어에 권장할 모델이 없습니다.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-cyan-600 text-xs">
+                  브라우저에만 저장되며 서버로 전송되어 Claude 호출에만 사용됩니다.
+                </p>
+                <a
+                  href="https://console.anthropic.com/settings/billing"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block text-xs text-cyan-400 underline hover:text-cyan-300"
+                >
+                  💳 남은 크레딧 확인 (Anthropic Console)
+                </a>
+                <input
+                  type="password"
+                  defaultValue={apiKey}
+                  placeholder="sk-ant-..."
+                  className="w-full bg-black/40 border border-cyan-800 rounded px-3 py-2 text-cyan-100 outline-none"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveKey((e.target as HTMLInputElement).value);
+                  }}
+                  id="key-input"
+                />
+                <div className="flex justify-end">
+                  <button
+                    onClick={() =>
+                      saveKey((document.getElementById("key-input") as HTMLInputElement).value)
+                    }
+                    className="px-3 py-1 border border-cyan-600 rounded text-cyan-300 text-sm"
+                  >
+                    저장
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {((backend === "cloud" && apiKey) || (backend === "local" && localModel)) && (
+              <div className="flex justify-end pt-1">
+                <button onClick={() => setShowSettings(false)} className="px-3 py-1 text-cyan-500 text-sm">
+                  닫기
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
