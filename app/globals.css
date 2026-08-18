@@ -20,7 +20,25 @@
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: #05080a;
+  color: #bfe9ff;
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes spin-slow-reverse {
+  from { transform: rotate(360deg); }
+  to { transform: rotate(0deg); }
+}
+@keyframes core-pulse {
+  0%, 100% { box-shadow: 0 0 30px 10px rgba(56, 214, 255, 0.5), inset 0 0 20px rgba(56, 214, 255, 0.6); }
+  50% { box-shadow: 0 0 60px 20px rgba(56, 214, 255, 0.85), inset 0 0 35px rgba(56, 214, 255, 0.9); }
+}
+
+.ring-slow { animation: spin-slow 12s linear infinite; }
+.ring-fast { animation: spin-slow-reverse 7s linear infinite; }
+.core-idle { animation: core-pulse 3s ease-in-out infinite; }
+.core-active { animation: core-pulse 0.9s ease-in-out infinite; }

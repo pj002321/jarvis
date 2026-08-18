@@ -1,36 +1,23 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# JARVIS UI
 
-## Getting Started
+로컬 프로젝트 폴더를 지정하면 파일 트리를 시각화하고, 채팅(텍스트/음성)으로 코드에 대해 질문하고 답변받을 수 있는 Iron Man JARVIS 스타일 HUD 데스크톱 도구입니다. Next.js 기반이며 Claude(Anthropic API)로 답변을 생성합니다.
 
-First, run the development server:
+## 실행
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run build
+npm run start
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`http://localhost:3000` 접속 후:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. 설정에서 Anthropic API 키 입력 (브라우저 로컬에만 저장됨)
+2. 왼쪽 패널에 분석할 로컬 프로젝트의 절대 경로 입력 후 스캔
+3. 채팅창에 질문 입력 또는 마이크 버튼으로 음성 질문
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+질문 시 서버가 지정한 폴더에서 관련 파일을 키워드로 검색해 Claude에게 컨텍스트로 전달합니다 (`lib/scan.ts`, `app/api/chat/route.ts`).
 
-## Learn More
+## macOS 데스크톱 앱으로 실행
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+바탕화면의 `JARVIS.app`을 더블클릭하면 서버가 자동으로 시작되고 브라우저 앱 창으로 열립니다.
