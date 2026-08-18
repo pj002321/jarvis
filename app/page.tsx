@@ -6,10 +6,11 @@ import { scanDirectory, searchRelevantFiles, supportsDirectoryPicker } from "@/l
 import { buildCodeGraph, type GraphNode, type GraphEdge } from "@/lib/codeGraph";
 import { loadDirHandle, saveDirHandle } from "@/lib/dirHandleStore";
 import type { LocalModel } from "@/lib/localModels";
+import { extractFileEdits, stripFileBlocks, writeFile, type FileEdit } from "@/lib/fileEdits";
 import CodeTree from "@/components/CodeTree";
 import CodeGraph from "@/components/CodeGraph";
 
-type Message = { role: "user" | "assistant"; content: string };
+type Message = { role: "user" | "assistant"; content: string; edits?: FileEdit[] };
 type ViewMode = "tree" | "graph";
 type Backend = "cloud" | "local";
 type HardwareInfo = { totalMemGB: number; cpu: string; recommended: LocalModel[] };
@@ -47,6 +48,8 @@ export default function Home() {
   const [viewMode, setViewMode] = useState<ViewMode>("graph");
   const [graph, setGraph] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] }>({ nodes: [], edges: [] });
   const [pendingHandle, setPendingHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [applyingEdit, setApplyingEdit] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -91,7 +94,7 @@ export default function Home() {
     (async () => {
       const handle = await loadDirHandle().catch(() => null);
       if (!handle) return;
-      const perm = await (handle as any).queryPermission({ mode: "read" }).catch(() => "denied");
+      const perm = await (handle as any).queryPermission({ mode: "readwrite" }).catch(() => "denied");
       if (perm === "granted") {
         await scanAndSet(handle);
       } else if (perm === "prompt") {
@@ -175,6 +178,7 @@ export default function Home() {
   }
 
   async function scanAndSet(handle: FileSystemDirectoryHandle) {
+    setDirHandle(handle);
     setScanning(true);
     setScanError("");
     try {
@@ -196,7 +200,7 @@ export default function Home() {
     }
     let handle: FileSystemDirectoryHandle;
     try {
-      handle = await (window as any).showDirectoryPicker();
+      handle = await (window as any).showDirectoryPicker({ mode: "readwrite" });
     } catch {
       return; // user cancelled the dialog
     }
@@ -209,7 +213,7 @@ export default function Home() {
     if (!pendingHandle) return;
     setScanning(true);
     try {
-      const perm = await (pendingHandle as any).requestPermission({ mode: "read" });
+      const perm = await (pendingHandle as any).requestPermission({ mode: "readwrite" });
       if (perm !== "granted") {
         setScanError("폴더 접근 권한이 거부되었습니다. 다시 열어주세요.");
         setScanning(false);
@@ -244,6 +248,19 @@ export default function Home() {
     utter.lang = "ko-KR";
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utter);
+  }
+
+  async function applyEdit(edit: FileEdit) {
+    if (!dirHandle) return;
+    setApplyingEdit(edit.path);
+    try {
+      await writeFile(dirHandle, edit.path, edit.content);
+      await scanAndSet(dirHandle);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "파일 저장에 실패했습니다.");
+    } finally {
+      setApplyingEdit(null);
+    }
   }
 
   function buildContext(query: string): string {
@@ -303,7 +320,10 @@ export default function Home() {
         full += decoder.decode(value, { stream: true });
         setMessages([...nextMessages, { role: "assistant", content: full }]);
       }
-      speak(full);
+      const edits = extractFileEdits(full);
+      const displayContent = edits.length > 0 ? stripFileBlocks(full) : full;
+      setMessages([...nextMessages, { role: "assistant", content: displayContent, edits }]);
+      speak(displayContent);
     } finally {
       setBusy(false);
     }
@@ -412,6 +432,25 @@ export default function Home() {
               >
                 {m.content || "..."}
               </span>
+              {m.edits && m.edits.length > 0 && (
+                <div className="mt-1 space-y-1 inline-flex flex-col max-w-[85%] w-full">
+                  {m.edits.map((edit, ei) => (
+                    <div
+                      key={ei}
+                      className="flex items-center justify-between gap-2 px-2 py-1 rounded border border-fuchsia-800/50 bg-fuchsia-950/20 text-xs"
+                    >
+                      <span className="text-fuchsia-300 truncate">📝 {edit.path}</span>
+                      <button
+                        onClick={() => applyEdit(edit)}
+                        disabled={!dirHandle || applyingEdit === edit.path}
+                        className="px-2 py-0.5 border border-fuchsia-600 rounded text-fuchsia-200 shrink-0 disabled:opacity-40"
+                      >
+                        {applyingEdit === edit.path ? "적용 중..." : "적용"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
           <div ref={logEndRef} />
