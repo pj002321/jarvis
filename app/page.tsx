@@ -40,12 +40,14 @@ export default function Home() {
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [pullingModel, setPullingModel] = useState<string | null>(null);
   const [pullProgress, setPullProgress] = useState<PullProgress | null>(null);
+  const [deletingModel, setDeletingModel] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [tree, setTree] = useState<TreeNode | null>(null);
   const [fileMap, setFileMap] = useState<Map<string, string> | null>(null);
   const [scanError, setScanError] = useState("");
   const [scanning, setScanning] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("graph");
+  const [graphExpanded, setGraphExpanded] = useState(false);
   const [graph, setGraph] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] }>({ nodes: [], edges: [] });
   const [pendingHandle, setPendingHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
@@ -174,6 +176,25 @@ export default function Home() {
     } finally {
       setPullingModel(null);
       setPullProgress(null);
+    }
+  }
+
+  async function deleteModel(tag: string) {
+    if (!confirm(`${tag} 모델을 삭제할까요?`)) return;
+    setDeletingModel(tag);
+    try {
+      const res = await fetch("/api/ollama/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: tag }),
+      });
+      if (!res.ok) throw new Error("모델 삭제에 실패했습니다.");
+      if (localModel === tag) setLocalModel("");
+      await refreshOllamaStatus();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "모델 삭제에 실패했습니다.");
+    } finally {
+      setDeletingModel(null);
     }
   }
 
@@ -364,6 +385,15 @@ export default function Home() {
               </button>
             </div>
           )}
+          {tree && viewMode === "graph" && (
+            <button
+              onClick={() => setGraphExpanded(true)}
+              className="px-2 py-1.5 text-xs border border-cyan-700 rounded text-cyan-400"
+              title="그래프 크게 보기"
+            >
+              ⤢
+            </button>
+          )}
         </div>
         {pendingHandle && !tree && (
           <button
@@ -490,6 +520,32 @@ export default function Home() {
         </form>
       </div>
 
+      {graphExpanded && (
+        <div
+          className="fixed inset-0 bg-black/90 flex flex-col p-4 z-20"
+          onClick={() => setGraphExpanded(false)}
+        >
+          <div className="flex items-center justify-between mb-2 shrink-0">
+            <p className="text-cyan-500 text-xs">
+              {tree?.name} · 관계 {graph.edges.length}개 — 바깥을 클릭하면 닫힙니다
+            </p>
+            <button
+              onClick={() => setGraphExpanded(false)}
+              className="px-3 py-1 text-xs border border-cyan-700 rounded text-cyan-300"
+            >
+              ✕ 닫기
+            </button>
+          </div>
+          <div className="flex-1 min-h-0" onClick={(e) => e.stopPropagation()}>
+            <CodeGraph nodes={graph.nodes} edges={graph.edges} />
+          </div>
+          <div className="flex gap-4 text-xs text-cyan-600 justify-center mt-2 shrink-0">
+            <span className="text-cyan-400">● import</span>
+            <span className="text-fuchsia-400">● DB 외래키</span>
+          </div>
+        </div>
+      )}
+
       {showSettings && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-20">
           <div className="bg-[#0a1014] border border-cyan-700 rounded-xl p-6 w-full max-w-md space-y-3">
@@ -544,12 +600,21 @@ export default function Home() {
                             <p className="text-cyan-700 truncate">{m.note} · {m.minRamGB}GB+</p>
                           </div>
                           {installed ? (
-                            <button
-                              onClick={() => selectLocalModel(m.tag)}
-                              className="px-2 py-1 border border-cyan-600 rounded text-cyan-300 shrink-0"
-                            >
-                              {selected ? "선택됨" : "선택"}
-                            </button>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                onClick={() => selectLocalModel(m.tag)}
+                                className="px-2 py-1 border border-cyan-600 rounded text-cyan-300"
+                              >
+                                {selected ? "선택됨" : "선택"}
+                              </button>
+                              <button
+                                onClick={() => deleteModel(m.tag)}
+                                disabled={deletingModel !== null}
+                                className="px-2 py-1 border border-red-800/60 rounded text-red-400 disabled:opacity-40 whitespace-nowrap"
+                              >
+                                {deletingModel === m.tag ? "삭제 중..." : "삭제"}
+                              </button>
+                            </div>
                           ) : (
                             <button
                               onClick={() => pullModel(m.tag)}

@@ -1,10 +1,16 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 const SYSTEM_PROMPT =
-  "You are J.A.R.V.I.S., Tony Stark's AI assistant: sharp, dry-witted, unfailingly polite, and extremely concise. Address the user as 'sir' or 'ma'am' occasionally. Keep answers short and to the point unless asked for detail. When code context is provided, ground your answer in it and cite file paths. " +
-  "When the user asks you to write, fix, or modify a file, output the COMPLETE new content of each changed file wrapped in a block like this, using the exact relative path shown in the code context: <file path=\"relative/path.ts\">\n...full file content...\n</file>. Do not truncate or use '...'. One block per file, after a brief explanation.";
+  "You are J.A.R.V.I.S., Tony Stark's AI assistant: sharp, dry-witted, unfailingly polite, and extremely concise. Address the user as 'sir' or 'ma'am' occasionally. Keep answers short and to the point unless asked for detail. When code context is provided, ground your answer in it and cite file paths; if a file isn't shown in the context below, say you don't have it rather than guessing its contents. " +
+  "When the user asks you to write, fix, or modify a file, output the COMPLETE new content of each changed file wrapped in exactly this format, using the exact relative path shown in the code context, with nothing else inside the tags and NOT wrapped in a markdown code fence: <file path=\"relative/path.ts\">\nfull file content\n</file>. Do not truncate content or use '...'. One block per file, after a brief explanation.";
 
-const OLLAMA_URL = "http://localhost:11434";
+// ponytail: fixed low temperature for more reliable instruction-following on small local
+// models; num_ctx sized to cover the ~40k-char context budget buildContext() assembles
+// client-side (app/page.tsx MAX_CONTEXT_CHARS) plus conversation — without this Ollama's
+// default context window silently truncates most of the code context we send it.
+const OLLAMA_OPTIONS = { temperature: 0.4, num_ctx: 16384 };
+
+const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
 
 export async function POST(req: Request) {
   const { messages, apiKey, context, backend, model } = await req.json();
@@ -28,6 +34,7 @@ export async function POST(req: Request) {
             body: JSON.stringify({
               model,
               stream: true,
+              options: OLLAMA_OPTIONS,
               messages: [{ role: "system", content: system }, ...messages],
             }),
           });
