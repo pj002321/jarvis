@@ -5,6 +5,9 @@
       "label": "Install App",
       "type": "shell",
       "command": "npm run dist",
+      "windows": {
+        "command": "powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1"
+      },
       "group": {
         "kind": "build",
         "isDefault": true

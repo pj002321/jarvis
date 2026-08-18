@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "main": "electron/main.js",
+  "repository": "pj002321/jarvis",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -28,11 +29,14 @@
     },
     "mac": {
       "icon": "public/icon.png",
-      "target": "dir"
+      "target": ["dir", "dmg"]
     },
     "win": {
       "icon": "public/icon.png",
       "target": "nsis"
+    },
+    "publish": {
+      "provider": "github"
     }
   },
   "dependencies": {
