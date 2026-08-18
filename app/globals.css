@@ -47,3 +47,15 @@ body {
   to { stroke-dashoffset: -22; }
 }
 .edge-flow { animation: dash-flow 1.6s linear infinite; }
+
+@keyframes graph-pop {
+  from { opacity: 0; transform: scale(0.8); }
+  to { opacity: 1; transform: scale(1); }
+}
+.graph-pop { animation: graph-pop 0.5s ease-out; }
+
+@keyframes node-pop {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.node-pop { animation: node-pop 0.4s ease-out backwards; }

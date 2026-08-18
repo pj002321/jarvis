@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { TreeNode } from "@/lib/types";
 import { scanDirectory, searchRelevantFiles, supportsDirectoryPicker } from "@/lib/clientScan";
 import { buildCodeGraph, type GraphNode, type GraphEdge } from "@/lib/codeGraph";
+import { loadDirHandle, saveDirHandle } from "@/lib/dirHandleStore";
 import CodeTree from "@/components/CodeTree";
 import CodeGraph from "@/components/CodeGraph";
 
@@ -29,8 +30,9 @@ export default function Home() {
   const [fileMap, setFileMap] = useState<Map<string, string> | null>(null);
   const [scanError, setScanError] = useState("");
   const [scanning, setScanning] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>("tree");
+  const [viewMode, setViewMode] = useState<ViewMode>("graph");
   const [graph, setGraph] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] }>({ nodes: [], edges: [] });
+  const [pendingHandle, setPendingHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const recognitionRef = useRef<any>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -60,10 +62,40 @@ export default function Home() {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => {
+    if (!supportsDirectoryPicker()) return;
+    (async () => {
+      const handle = await loadDirHandle().catch(() => null);
+      if (!handle) return;
+      const perm = await (handle as any).queryPermission({ mode: "read" }).catch(() => "denied");
+      if (perm === "granted") {
+        await scanAndSet(handle);
+      } else if (perm === "prompt") {
+        setPendingHandle(handle);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function saveKey(key: string) {
     setApiKey(key);
     localStorage.setItem(KEY_STORAGE, key);
     setShowSettings(false);
+  }
+
+  async function scanAndSet(handle: FileSystemDirectoryHandle) {
+    setScanning(true);
+    setScanError("");
+    try {
+      const { tree, fileMap } = await scanDirectory(handle);
+      setTree(tree);
+      setFileMap(fileMap);
+      setGraph(buildCodeGraph(fileMap));
+    } catch (err) {
+      setScanError(err instanceof Error ? err.message : "폴더를 읽을 수 없습니다.");
+    } finally {
+      setScanning(false);
+    }
   }
 
   async function openFolder() {
@@ -77,18 +109,28 @@ export default function Home() {
     } catch {
       return; // user cancelled the dialog
     }
+    await saveDirHandle(handle).catch(() => {});
+    setPendingHandle(null);
+    await scanAndSet(handle);
+  }
+
+  async function reconnectFolder() {
+    if (!pendingHandle) return;
     setScanning(true);
-    setScanError("");
     try {
-      const { tree, fileMap } = await scanDirectory(handle);
-      setTree(tree);
-      setFileMap(fileMap);
-      setGraph(buildCodeGraph(fileMap));
-    } catch (err) {
-      setScanError(err instanceof Error ? err.message : "폴더를 읽을 수 없습니다.");
-    } finally {
+      const perm = await (pendingHandle as any).requestPermission({ mode: "read" });
+      if (perm !== "granted") {
+        setScanError("폴더 접근 권한이 거부되었습니다. 다시 열어주세요.");
+        setScanning(false);
+        return;
+      }
+    } catch {
+      setScanError("폴더 접근 권한 요청에 실패했습니다. 다시 열어주세요.");
       setScanning(false);
+      return;
     }
+    await scanAndSet(pendingHandle);
+    setPendingHandle(null);
   }
 
   function toggleListening() {
@@ -203,6 +245,15 @@ export default function Home() {
             </div>
           )}
         </div>
+        {pendingHandle && !tree && (
+          <button
+            onClick={reconnectFolder}
+            disabled={scanning}
+            className="mb-2 px-2 py-1.5 text-xs border border-cyan-700 rounded text-cyan-400 bg-cyan-950/20 disabled:opacity-40"
+          >
+            🔗 이전 폴더 "{pendingHandle.name}" 다시 열기
+          </button>
+        )}
         {scanError && <p className="text-red-400 text-xs mb-2">{scanError}</p>}
         {tree && (
           <p className="text-cyan-600 text-xs mb-2">
@@ -307,6 +358,14 @@ export default function Home() {
             <p className="text-cyan-600 text-xs">
               브라우저에만 저장되며 서버로 전송되어 Claude 호출에만 사용됩니다.
             </p>
+            <a
+              href="https://console.anthropic.com/settings/billing"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block text-xs text-cyan-400 underline hover:text-cyan-300"
+            >
+              💳 남은 크레딧 확인 (Anthropic Console)
+            </a>
             <input
               type="password"
               defaultValue={apiKey}
