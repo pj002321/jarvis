@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { TreeNode } from "@/lib/scan";
+import type { TreeNode } from "@/lib/types";
 
 function formatSize(bytes?: number) {
   if (!bytes) return "";

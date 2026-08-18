@@ -42,3 +42,8 @@ body {
 .ring-fast { animation: spin-slow-reverse 7s linear infinite; }
 .core-idle { animation: core-pulse 3s ease-in-out infinite; }
 .core-active { animation: core-pulse 0.9s ease-in-out infinite; }
+
+@keyframes dash-flow {
+  to { stroke-dashoffset: -22; }
+}
+.edge-flow { animation: dash-flow 1.6s linear infinite; }

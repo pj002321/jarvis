@@ -1,14 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { searchRelevantFiles } from "@/lib/scan";
-import path from "path";
 
 const SYSTEM_PROMPT =
   "You are J.A.R.V.I.S., Tony Stark's AI assistant: sharp, dry-witted, unfailingly polite, and extremely concise. Address the user as 'sir' or 'ma'am' occasionally. Keep answers short and to the point unless asked for detail. When code context is provided, ground your answer in it and cite file paths.";
 
-const MAX_CONTEXT_CHARS = 40_000;
-
 export async function POST(req: Request) {
-  const { messages, apiKey, dir } = await req.json();
+  const { messages, apiKey, context } = await req.json();
   const key = apiKey || process.env.ANTHROPIC_API_KEY;
 
   if (!key) {
@@ -18,21 +14,7 @@ export async function POST(req: Request) {
     });
   }
 
-  let system = SYSTEM_PROMPT;
-  if (dir) {
-    const lastUser = [...messages].reverse().find((m: any) => m.role === "user");
-    const matches = lastUser ? await searchRelevantFiles(dir, lastUser.content) : [];
-    if (matches.length > 0) {
-      let context = "";
-      for (const m of matches) {
-        const rel = path.relative(dir, m.path);
-        const chunk = `\n\n### ${rel}\n\`\`\`\n${m.content.slice(0, 6000)}\n\`\`\``;
-        if (context.length + chunk.length > MAX_CONTEXT_CHARS) break;
-        context += chunk;
-      }
-      system += `\n\nRelevant code from the project at ${dir}:${context}`;
-    }
-  }
+  const system = context ? `${SYSTEM_PROMPT}\n\nRelevant code from the project:${context}` : SYSTEM_PROMPT;
 
   const anthropic = new Anthropic({ apiKey: key });
   const encoder = new TextEncoder();

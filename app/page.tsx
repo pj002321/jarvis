@@ -1,13 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { TreeNode } from "@/lib/scan";
+import type { TreeNode } from "@/lib/types";
+import { scanDirectory, searchRelevantFiles, supportsDirectoryPicker } from "@/lib/clientScan";
+import { buildCodeGraph, type GraphNode, type GraphEdge } from "@/lib/codeGraph";
 import CodeTree from "@/components/CodeTree";
+import CodeGraph from "@/components/CodeGraph";
 
 type Message = { role: "user" | "assistant"; content: string };
+type ViewMode = "tree" | "graph";
 
 const KEY_STORAGE = "jarvis_api_key";
-const DIR_STORAGE = "jarvis_dir";
+const MAX_CONTEXT_CHARS = 40_000;
 
 function countFiles(node: TreeNode): number {
   if (node.type === "file") return 1;
@@ -21,10 +25,12 @@ export default function Home() {
   const [listening, setListening] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [showSettings, setShowSettings] = useState(false);
-  const [dir, setDir] = useState("");
   const [tree, setTree] = useState<TreeNode | null>(null);
+  const [fileMap, setFileMap] = useState<Map<string, string> | null>(null);
   const [scanError, setScanError] = useState("");
   const [scanning, setScanning] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("tree");
+  const [graph, setGraph] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] }>({ nodes: [], edges: [] });
   const recognitionRef = useRef<any>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -32,12 +38,6 @@ export default function Home() {
     const saved = localStorage.getItem(KEY_STORAGE) ?? "";
     setApiKey(saved);
     if (!saved) setShowSettings(true);
-
-    const savedDir = localStorage.getItem(DIR_STORAGE) ?? "";
-    if (savedDir) {
-      setDir(savedDir);
-      scanDir(savedDir);
-    }
 
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -66,27 +66,26 @@ export default function Home() {
     setShowSettings(false);
   }
 
-  async function scanDir(target: string) {
-    const path = target.trim();
-    if (!path) return;
+  async function openFolder() {
+    if (!supportsDirectoryPicker()) {
+      alert("이 브라우저는 폴더 열기를 지원하지 않습니다. Chrome을 사용해주세요.");
+      return;
+    }
+    let handle: FileSystemDirectoryHandle;
+    try {
+      handle = await (window as any).showDirectoryPicker();
+    } catch {
+      return; // user cancelled the dialog
+    }
     setScanning(true);
     setScanError("");
     try {
-      const res = await fetch("/api/scan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dir: path }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setScanError(data.error ?? "스캔 실패");
-        setTree(null);
-        return;
-      }
-      setTree(data.tree);
-      localStorage.setItem(DIR_STORAGE, path);
-    } catch {
-      setScanError("서버에 연결할 수 없습니다.");
+      const { tree, fileMap } = await scanDirectory(handle);
+      setTree(tree);
+      setFileMap(fileMap);
+      setGraph(buildCodeGraph(fileMap));
+    } catch (err) {
+      setScanError(err instanceof Error ? err.message : "폴더를 읽을 수 없습니다.");
     } finally {
       setScanning(false);
     }
@@ -114,6 +113,18 @@ export default function Home() {
     window.speechSynthesis.speak(utter);
   }
 
+  function buildContext(query: string): string {
+    if (!fileMap) return "";
+    const matches = searchRelevantFiles(fileMap, query);
+    let context = "";
+    for (const m of matches) {
+      const chunk = `\n\n### ${m.path}\n\`\`\`\n${m.content.slice(0, 6000)}\n\`\`\``;
+      if (context.length + chunk.length > MAX_CONTEXT_CHARS) break;
+      context += chunk;
+    }
+    return context;
+  }
+
   async function send(text: string) {
     const content = text.trim();
     if (!content || busy) return;
@@ -131,7 +142,7 @@ export default function Home() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: nextMessages, apiKey, dir: tree ? dir : undefined }),
+        body: JSON.stringify({ messages: nextMessages, apiKey, context: buildContext(content) || undefined }),
       });
 
       if (!res.ok || !res.body) {
@@ -165,40 +176,55 @@ export default function Home() {
         설정
       </button>
 
-      {/* Left: code tree panel */}
-      <div className="w-full md:w-80 shrink-0 flex flex-col border border-cyan-900/60 rounded-xl p-3 bg-black/20 max-h-[45vh] md:max-h-[calc(100vh-2rem)]">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            scanDir(dir);
-          }}
-          className="flex gap-2 mb-2"
-        >
-          <input
-            value={dir}
-            onChange={(e) => setDir(e.target.value)}
-            placeholder="/path/to/project"
-            className="flex-1 bg-black/40 border border-cyan-800/60 rounded px-2 py-1 text-xs text-cyan-100 outline-none focus:border-cyan-400"
-          />
+      {/* Left: code tree / relationship graph panel */}
+      <div className="w-full md:w-96 shrink-0 flex flex-col border border-cyan-900/60 rounded-xl p-3 bg-black/20 max-h-[55vh] md:max-h-[calc(100vh-2rem)]">
+        <div className="flex gap-2 mb-2">
           <button
-            type="submit"
+            onClick={openFolder}
             disabled={scanning}
-            className="px-2 py-1 text-xs border border-cyan-600 rounded text-cyan-300 disabled:opacity-40"
+            className="flex-1 px-2 py-1.5 text-xs border border-cyan-600 rounded text-cyan-300 disabled:opacity-40 bg-cyan-950/30"
           >
-            {scanning ? "..." : "스캔"}
+            {scanning ? "스캔 중..." : "📂 폴더 열기"}
           </button>
-        </form>
+          {tree && (
+            <div className="flex border border-cyan-800/60 rounded overflow-hidden text-xs">
+              <button
+                onClick={() => setViewMode("tree")}
+                className={`px-2 py-1.5 ${viewMode === "tree" ? "bg-cyan-800/50 text-cyan-100" : "text-cyan-600"}`}
+              >
+                트리
+              </button>
+              <button
+                onClick={() => setViewMode("graph")}
+                className={`px-2 py-1.5 ${viewMode === "graph" ? "bg-cyan-800/50 text-cyan-100" : "text-cyan-600"}`}
+              >
+                그래프
+              </button>
+            </div>
+          )}
+        </div>
         {scanError && <p className="text-red-400 text-xs mb-2">{scanError}</p>}
         {tree && (
           <p className="text-cyan-600 text-xs mb-2">
             {tree.name} · 파일 {countFiles(tree)}개
+            {viewMode === "graph" && ` · 관계 ${graph.edges.length}개`}
           </p>
         )}
         <div className="flex-1 overflow-y-auto">
-          {tree ? (
-            <CodeTree tree={tree} />
-          ) : (
-            <p className="text-cyan-700 text-xs">분석할 로컬 프로젝트 경로를 입력하세요.</p>
+          {!tree && (
+            <p className="text-cyan-700 text-xs">
+              "폴더 열기"로 분석할 로컬 프로젝트를 선택하세요.
+            </p>
+          )}
+          {tree && viewMode === "tree" && <CodeTree tree={tree} />}
+          {tree && viewMode === "graph" && (
+            <div>
+              <CodeGraph nodes={graph.nodes} edges={graph.edges} />
+              <div className="flex gap-4 text-[10px] text-cyan-600 justify-center mt-1">
+                <span className="text-cyan-400">● import</span>
+                <span className="text-fuchsia-400">● DB 외래키</span>
+              </div>
+            </div>
           )}
         </div>
       </div>

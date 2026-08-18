@@ -13,10 +13,11 @@ npm run start
 `http://localhost:3000` 접속 후:
 
 1. 설정에서 Anthropic API 키 입력 (브라우저 로컬에만 저장됨)
-2. 왼쪽 패널에 분석할 로컬 프로젝트의 절대 경로 입력 후 스캔
-3. 채팅창에 질문 입력 또는 마이크 버튼으로 음성 질문
+2. 왼쪽 패널의 "📂 폴더 열기" 버튼으로 분석할 로컬 프로젝트 폴더 선택 (Chrome File System Access API, 경로 입력 불필요)
+3. 트리 / 그래프 보기 전환 — 그래프는 import 관계와 DB 외래키(Prisma `model`, SQL `REFERENCES`)를 홀로그램 스타일로 시각화
+4. 채팅창에 질문 입력 또는 마이크 버튼으로 음성 질문
 
-질문 시 서버가 지정한 폴더에서 관련 파일을 키워드로 검색해 Claude에게 컨텍스트로 전달합니다 (`lib/scan.ts`, `app/api/chat/route.ts`).
+폴더 스캔과 관련 파일 검색은 모두 브라우저에서 수행되며, 질문 시 관련 파일 내용만 컨텍스트로 Claude에 전달됩니다 (`lib/clientScan.ts`, `lib/codeGraph.ts`, `app/api/chat/route.ts`). 서버는 파일시스템에 접근하지 않습니다. 폴더 열기는 Chrome 계열 브라우저에서만 지원됩니다.
 
 ## macOS 데스크톱 앱으로 실행
 
